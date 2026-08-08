@@ -392,16 +392,42 @@ perform_update() {
     echo ""
     echo "telegram4kvas: установка нового updater..."
 
-    cp "$RELEASE_ROOT/upgrade.sh" "/opt/upgrade.sh"
+    NEW_UPDATER="/opt/upgrade.sh.new"
+
+    rm -f "$NEW_UPDATER"
+
+    cp "$RELEASE_ROOT/upgrade.sh" "$NEW_UPDATER"
 
     if [ $? -ne 0 ]; then
-        echo "telegram4kvas: не удалось обновить updater."
-        echo "telegram4kvas: текущая версия бота продолжает работать."
-        cleanup
+        echo "telegram4kvas: не удалось подготовить новый updater."
+        rm -f "$NEW_UPDATER"
+        rollback
         return 1
     fi
 
-    chmod +x "/opt/upgrade.sh"
+    chmod +x "$NEW_UPDATER"
+
+    if [ ! -x "$NEW_UPDATER" ]; then
+        echo "telegram4kvas: новый updater не получил права на выполнение."
+        rm -f "$NEW_UPDATER"
+        rollback
+        return 1
+    fi
+
+    mv -f "$NEW_UPDATER" "/opt/upgrade.sh"
+
+    if [ $? -ne 0 ]; then
+        echo "telegram4kvas: не удалось заменить updater."
+        rm -f "$NEW_UPDATER"
+        rollback
+        return 1
+    fi
+
+    if [ ! -x "/opt/upgrade.sh" ]; then
+        echo "telegram4kvas: updater после установки не найден."
+        rollback
+        return 1
+    fi
 
     cleanup
 
