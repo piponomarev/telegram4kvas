@@ -4,7 +4,7 @@ Telegram bot for [KVAS](https://github.com/qzeleza/kvas) by [qzeleza](https://gi
 # Установка
 Скачайте и запустите установочный скрипт:
 ```
-curl -OLf https://raw.githubusercontent.com/dnstkrv/telegram4kvas/main/script/install.sh && sh install.sh -install
+curl -OLf https://raw.githubusercontent.com/piponomarev/telegram4kvas/main/script/install.sh && sh install.sh -install
 ```
 В конце установки скрипт запросит у Вас **API-токен**. 
 
