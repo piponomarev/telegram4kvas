@@ -791,44 +791,177 @@ def run_reset(message: types.Message):
         bot.send_message(message.chat.id, "Произошла ошибка при запуске сброса.")
 
 
+def get_latest_release():
+    response = requests.get(
+        "https://api.github.com/repos/piponomarev/telegram4kvas/releases/latest",
+        timeout=15,
+    )
+    response.raise_for_status()
+
+    release = response.json()
+    return (
+        release["tag_name"],
+        release.get("body", ""),
+    )
+
+
 @bot.message_handler(regexp="Обновить бота", chat_types=["private"])
 def update_bot(message: types.Message):
     try:
-        logger.warning(
-            "User %s requested to update the bot", message.from_user.username
+        logger.info(
+            "User %s requested update check", message.from_user.username
         )
 
-        response = requests.get(
-            "https://api.github.com/repos/piponomarev/telegram4kvas/releases/latest"
-        )
-        if response.status_code != 200:
-            raise Exception(f"Failed to retrieve latest version: {response.text}")
         version_now = telegram_bot_config.version
-        version_new = response.json()["tag_name"]
-        changelog = response.json()["body"]
+        version_new, changelog = get_latest_release()
 
-        if version_now != version_new:
+        if version_now == version_new:
             bot.send_message(
                 message.chat.id,
-                f"Текущая версия бота: {version_now}, устанавливается версия: {version_new}",
+                f"✅ Бот уже обновлён.\n\n"
+                f"Текущая версия: {version_now}\n"
+                f"Последняя версия: {version_new}",
             )
-            if changelog:
-                send_long_message(changelog, message)
-            os.system(
-                "curl -o /opt/upgrade.sh https://raw.githubusercontent.com/piponomarev/telegram4kvas/main/upgrade.sh && sh /opt/upgrade.sh && rm /opt/upgrade.sh"
-            )
-            bot.send_message(message.chat.id, "Запущено обновление бота")
-        else:
+            return
+
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.row(
+            types.InlineKeyboardButton(
+                "🔄 Обновить",
+                callback_data=f"update_confirm:{version_new}",
+            ),
+            types.InlineKeyboardButton(
+                "❌ Отмена",
+                callback_data="update_cancel",
+            ),
+        )
+
+        bot.send_message(
+            message.chat.id,
+            f"🆕 Доступна новая версия telegram4kvas!\n\n"
+            f"Текущая версия: {version_now}\n"
+            f"Новая версия: {version_new}\n\n"
+            f"Запустить обновление?",
+            reply_markup=keyboard,
+        )
+
+        if changelog:
             bot.send_message(
                 message.chat.id,
-                f"Текущая версия актуальна ({version_now})",
+                f"Изменения в {version_new}:\n\n{changelog}",
             )
-
-        logger.warning("The bot has started updating")
 
     except Exception as e:
         logger.exception("Error in update_bot: %s", str(e))
-        bot.send_message(message.chat.id, "Произошла ошибка при обновлении бота.")
+        bot.send_message(
+            message.chat.id,
+            "Произошла ошибка при проверке обновления.",
+        )
+
+
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("update_confirm:")
+)
+def update_confirm_callback(call: types.CallbackQuery):
+    if call.from_user.id not in Middleware._get_admins(""):
+        bot.answer_callback_query(
+            call.id,
+            "Вы не авторизованы.",
+            show_alert=True,
+        )
+        return
+
+    try:
+        requested_version = call.data.split(":", 1)[1]
+
+        version_now = telegram_bot_config.version
+        version_new, changelog = get_latest_release()
+
+        if version_new != requested_version:
+            bot.answer_callback_query(
+                call.id,
+                "Версия на GitHub изменилась. Проверьте обновление ещё раз.",
+                show_alert=True,
+            )
+            return
+
+        if version_now == version_new:
+            bot.answer_callback_query(
+                call.id,
+                "Установлена последняя версия.",
+                show_alert=True,
+            )
+            bot.edit_message_reply_markup(
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=None,
+            )
+            return
+
+        bot.answer_callback_query(
+            call.id,
+            "Запускаю обновление...",
+        )
+
+        bot.edit_message_text(
+            f"🔄 Запускаю обновление telegram4kvas...\n\n"
+            f"{version_now} → {version_new}",
+            call.message.chat.id,
+            call.message.message_id,
+        )
+
+        logger.warning(
+            "User %s confirmed bot update: %s -> %s",
+            call.from_user.username,
+            version_now,
+            version_new,
+        )
+
+        upgrade_script = "/opt/upgrade.sh"
+
+        if not os.path.isfile(upgrade_script):
+            bot.send_message(
+                call.message.chat.id,
+                "❌ Не найден /opt/upgrade.sh",
+            )
+            return
+
+        subprocess.Popen(
+            [upgrade_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    except Exception as e:
+        logger.exception(
+            "Error in update_confirm_callback: %s",
+            str(e),
+        )
+        bot.send_message(
+            call.message.chat.id,
+            "❌ Не удалось запустить обновление.",
+        )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "update_cancel")
+def update_cancel_callback(call: types.CallbackQuery):
+    bot.answer_callback_query(
+        call.id,
+        "Обновление отменено.",
+    )
+
+    try:
+        bot.edit_message_text(
+            "❌ Обновление отменено.",
+            call.message.chat.id,
+            call.message.message_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "Unable to edit update cancellation message: %s",
+            str(e),
+        )
 
 
 @bot.message_handler(regexp="Назад", chat_types=["private"])
