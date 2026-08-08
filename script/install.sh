@@ -4,10 +4,26 @@ bot_path="/opt/etc/telegram4kvas"
 config_path="${bot_path}/telegram_bot_config.py"
 awg_config_path="${bot_path}/telegram4kvas.conf"
 release_url="https://api.github.com/repos/piponomarev/telegram4kvas/releases"
-
-latest_version=$(curl -sH "Accept: application/vnd.github.v3+json" "${release_url}/latest" | grep tag_name | awk -F\" '{print $4}')
+repo_url="https://github.com/piponomarev/telegram4kvas"
 
 PACKAGES="python3-base python3 python3-light libpython3 python3-logging python3-email python3-urllib python3-urllib3 python3-idna python3-requests python3-certifi python3-chardet python3-openssl python3-codecs"
+
+get_latest_version() {
+    latest_version=$(curl -fsSL \
+        -H "Accept: application/vnd.github.v3+json" \
+        "${release_url}/latest" |
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        head -n 1)
+
+    if [ -z "$latest_version" ]; then
+        echo ""
+        echo "Ошибка: не удалось определить последнюю версию telegram4kvas."
+        echo "Проверьте интернет-соединение и наличие Release на GitHub."
+        exit 1
+    fi
+
+    echo "Последняя версия telegram4kvas: ${latest_version}"
+}
 
 install_packages() {
     freespace=$(df -k /opt | awk 'NR==2 {print $4}')
@@ -31,7 +47,7 @@ install_packages() {
 
             if [ -z "$pkg_size" ]; then
                 echo ""
-                echo "Ошибка: Не удалось определить размер пакета $pkg."
+                echo "Ошибка: не удалось определить размер пакета $pkg."
                 echo "Проверьте интернет-соединение."
                 exit 1
             fi
@@ -43,7 +59,7 @@ install_packages() {
 
                 if [ "$attempts" -ge 3 ]; then
                     echo ""
-                    echo "Ошибка: Недостаточно места для установки $pkg."
+                    echo "Ошибка: недостаточно места для установки $pkg."
                     echo "Нужно: ${pkg_size_kb} KB, доступно: ${freespace} KB."
                     exit 1
                 fi
@@ -58,6 +74,12 @@ install_packages() {
             fi
 
             opkg install --nodeps "$pkg" >/dev/null 2>&1
+
+            if [ $? -ne 0 ]; then
+                echo ""
+                echo "Ошибка установки пакета: $pkg"
+                exit 1
+            fi
 
             index=$((index + 1))
 
@@ -137,6 +159,7 @@ select_awg_interface() {
 }
 
 if [ "$1" = "-remove" ]; then
+
     if [ -x /opt/etc/init.d/S98telegram4kvas ]; then
         /opt/etc/init.d/S98telegram4kvas stop
     fi
@@ -161,6 +184,10 @@ if [ "$1" = "-install" ]; then
         exit 1
     fi
 
+    echo "Проверка последней версии telegram4kvas..."
+    get_latest_version
+
+    echo ""
     echo "Обновление списка пакетов..."
     opkg update >/dev/null 2>&1
 
@@ -174,16 +201,21 @@ if [ "$1" = "-install" ]; then
     install_packages
 
     mkdir -p "${bot_path}"
+    mkdir -p /opt/tmp
 
     echo ""
     echo "Скачивание архива с GitHub..."
 
-    curl -Lo /opt/tmp/main.zip \
-        https://github.com/piponomarev/telegram4kvas/archive/refs/heads/main.zip \
-        >/dev/null 2>&1
+    rm -f /opt/tmp/main.zip
+    rm -rf /opt/tmp/telegram4kvas-main
 
-    if [ $? -ne 0 ]; then
+    curl -fsSL -L \
+        -o /opt/tmp/main.zip \
+        "${repo_url}/archive/refs/heads/main.zip"
+
+    if [ $? -ne 0 ] || [ ! -s /opt/tmp/main.zip ]; then
         echo "Ошибка скачивания telegram4kvas."
+        rm -f /opt/tmp/main.zip
         exit 1
     fi
 
@@ -193,6 +225,14 @@ if [ "$1" = "-install" ]; then
 
     if [ $? -ne 0 ]; then
         echo "Ошибка распаковки архива."
+        rm -f /opt/tmp/main.zip
+        exit 1
+    fi
+
+    if [ ! -f /opt/tmp/telegram4kvas-main/telegram_bot.py ]; then
+        echo "Ошибка: telegram_bot.py не найден в архиве."
+        rm -rf /opt/tmp/telegram4kvas-main
+        rm -f /opt/tmp/main.zip
         exit 1
     fi
 
@@ -200,8 +240,12 @@ if [ "$1" = "-install" ]; then
 
     cp /opt/tmp/telegram4kvas-main/telegram_bot_config.py "${bot_path}"
     cp /opt/tmp/telegram4kvas-main/telegram_bot.py "${bot_path}"
+
+    rm -rf "${bot_path}/telebot"
     cp -r /opt/tmp/telegram4kvas-main/telebot "${bot_path}"
-    cp /opt/tmp/telegram4kvas-main/S98telegram4kvas /opt/etc/init.d/S98telegram4kvas
+
+    cp /opt/tmp/telegram4kvas-main/S98telegram4kvas \
+        /opt/etc/init.d/S98telegram4kvas
 
     chmod +x /opt/etc/init.d/S98telegram4kvas
 
@@ -267,6 +311,7 @@ if [ "$1" = "-install" ]; then
     echo "Установка завершена!"
     echo "========================================"
     echo ""
+    echo "Версия: ${latest_version}"
     echo "AWG интерфейс: ${selected_interface}"
     echo "Telegram User ID: ${userid}"
     echo ""
