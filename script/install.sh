@@ -2,7 +2,7 @@
 
 bot_path="/opt/etc/telegram4kvas"
 config_path="${bot_path}/telegram_bot_config.py"
-release_url="https://api.github.com/repos/dnstkrv/telegram4kvas/releases"
+release_url="https://api.github.com/repos/piponomarev/telegram4kvas/releases"
 latest_version=$(curl -sH "Accept: application/vnd.github.v3+json" "${release_url}/latest" | grep tag_name | awk -F\" '{print $4}')
 PACKAGES="python3-base python3 python3-light libpython3 python3-logging python3-email python3-urllib python3-urllib3 python3-idna python3-requests python3-certifi python3-chardet python3-openssl python3-codecs"
 
@@ -85,7 +85,7 @@ if [ "$1" = "-install" ]; then
     mkdir -p "${bot_path}"
 
     echo "Скачивание архива с GitHub..."
-    curl -Lo /opt/tmp/main.zip https://github.com/dnstkrv/telegram4kvas/archive/refs/heads/main.zip &> /dev/null
+    curl -Lo /opt/tmp/main.zip https://github.com/piponomarev/telegram4kvas/archive/refs/heads/main.zip &> /dev/null
 
     echo "Распаковка архива..."
     unzip -q /opt/tmp/main.zip -d /opt/tmp
