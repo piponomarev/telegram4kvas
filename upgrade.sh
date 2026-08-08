@@ -100,7 +100,7 @@ check_update() {
     echo ""
 
     if [ "$installed_version" = "$latest_version" ]; then
-        echo "telegram4kvas: установлена последняя версия."
+        echo "telegram4kvas: версия актуальна, обновление не требуется."
         echo "telegram4kvas: обновление не требуется."
         return 2
     fi
