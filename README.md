@@ -19,6 +19,10 @@ curl -OLf https://raw.githubusercontent.com/piponomarev/telegram4kvas/main/scrip
 ```
 /opt/etc/init.d/S98telegram4kvas start
 ```
+# Изменить интерфейс
+```
+/opt/etc/init.d/S98telegram4kvas interface
+```
 # Удаление
 Для удаления бота выполните команду
 ```
