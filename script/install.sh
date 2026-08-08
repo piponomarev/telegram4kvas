@@ -3,22 +3,41 @@
 bot_path="/opt/etc/telegram4kvas"
 config_path="${bot_path}/telegram_bot_config.py"
 awg_config_path="${bot_path}/telegram4kvas.conf"
-release_url="https://api.github.com/repos/piponomarev/telegram4kvas/releases"
-repo_url="https://github.com/piponomarev/telegram4kvas"
+
+repo="piponomarev/telegram4kvas"
+release_url="https://api.github.com/repos/${repo}/releases/latest"
 
 PACKAGES="python3-base python3 python3-light libpython3 python3-logging python3-email python3-urllib python3-urllib3 python3-idna python3-requests python3-certifi python3-chardet python3-openssl python3-codecs"
 
-get_latest_version() {
-    latest_version=$(curl -fsSL \
+get_latest_release() {
+    release_json=$(curl -fsSL \
         -H "Accept: application/vnd.github.v3+json" \
-        "${release_url}/latest" |
+        "$release_url")
+
+    if [ $? -ne 0 ] || [ -z "$release_json" ]; then
+        echo ""
+        echo "Ошибка: не удалось получить информацию о последнем Release."
+        echo "Проверьте интернет-соединение."
+        exit 1
+    fi
+
+    latest_version=$(echo "$release_json" |
         sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        head -n 1)
+
+    zipball_url=$(echo "$release_json" |
+        sed -n 's/.*"zipball_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
         head -n 1)
 
     if [ -z "$latest_version" ]; then
         echo ""
-        echo "Ошибка: не удалось определить последнюю версию telegram4kvas."
-        echo "Проверьте интернет-соединение и наличие Release на GitHub."
+        echo "Ошибка: не удалось определить версию последнего Release."
+        exit 1
+    fi
+
+    if [ -z "$zipball_url" ]; then
+        echo ""
+        echo "Ошибка: GitHub не вернул ссылку на архив Release."
         exit 1
     fi
 
@@ -30,7 +49,15 @@ install_packages() {
 
     if [ "$freespace" -gt 30000 ]; then
         echo "Свободного места достаточно (${freespace} KB), устанавливаю все пакеты сразу..."
+
         opkg install --nodeps $PACKAGES >/dev/null 2>&1
+
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "Ошибка установки Python-зависимостей."
+            exit 1
+        fi
+
         return
     fi
 
@@ -139,7 +166,8 @@ select_awg_interface() {
                 ;;
             *)
                 if [ "$selection" -ge 1 ] && [ "$selection" -le "$count" ]; then
-                    selected_interface=$(echo "$interfaces" | sed -n "${selection}p")
+                    selected_interface=$(echo "$interfaces" |
+                        sed -n "${selection}p")
                     break
                 fi
 
@@ -152,6 +180,7 @@ select_awg_interface() {
     echo "Выбран AWG интерфейс: $selected_interface"
 
     printf 'TELEGRAM_AWG_INTERFACE="%s"\n' "$selected_interface" > "$awg_config_path"
+
     chmod 600 "$awg_config_path"
 
     echo "Конфигурация AWG сохранена:"
@@ -165,12 +194,14 @@ if [ "$1" = "-remove" ]; then
     fi
 
     rm -f /opt/etc/init.d/S98telegram4kvas
+    rm -f /opt/upgrade.sh
 
     opkg remove --force-removal-of-dependent-packages python3* >/dev/null 2>&1
 
-    rm -rf "${bot_path}"
+    rm -rf "$bot_path"
 
-    echo "Бот, конфигурация и зависимости удалены."
+    echo "Бот, конфигурация, updater и зависимости удалены."
+
     exit 0
 fi
 
@@ -179,17 +210,28 @@ if [ "$1" = "-install" ]; then
     freespace=$(df -k | grep opt | awk '/[0-9]%/{print $(NF-2)}')
     freespaceh=$(df -kh | grep opt | awk '/[0-9]%/{print $(NF-2)}')
 
+    if [ -z "$freespace" ]; then
+        echo "Ошибка: не удалось определить свободное место на /opt."
+        exit 1
+    fi
+
     if [ "$freespace" -le 10000 ]; then
         echo "У вас доступно ${freespaceh}, а для установки необходимо минимум 10M."
         exit 1
     fi
 
     echo "Проверка последней версии telegram4kvas..."
-    get_latest_version
+    get_latest_release
 
     echo ""
     echo "Обновление списка пакетов..."
+
     opkg update >/dev/null 2>&1
+
+    if [ $? -ne 0 ]; then
+        echo "Ошибка: не удалось обновить список пакетов."
+        exit 1
+    fi
 
     if opkg list-installed | grep -q kvas; then
         echo "КВАС установлен, продолжаем..."
@@ -200,54 +242,112 @@ if [ "$1" = "-install" ]; then
 
     install_packages
 
-    mkdir -p "${bot_path}"
+    mkdir -p "$bot_path"
     mkdir -p /opt/tmp
 
     echo ""
-    echo "Скачивание архива с GitHub..."
+    echo "Скачивание Release ${latest_version}..."
 
-    rm -f /opt/tmp/main.zip
-    rm -rf /opt/tmp/telegram4kvas-main
+    rm -f /opt/tmp/telegram4kvas-release.zip
+    rm -rf /opt/tmp/telegram4kvas-release
 
     curl -fsSL -L \
-        -o /opt/tmp/main.zip \
-        "${repo_url}/archive/refs/heads/main.zip"
+        -o /opt/tmp/telegram4kvas-release.zip \
+        "$zipball_url"
 
-    if [ $? -ne 0 ] || [ ! -s /opt/tmp/main.zip ]; then
-        echo "Ошибка скачивания telegram4kvas."
-        rm -f /opt/tmp/main.zip
+    if [ $? -ne 0 ] || [ ! -s /opt/tmp/telegram4kvas-release.zip ]; then
+        echo "Ошибка скачивания Release ${latest_version}."
+        rm -f /opt/tmp/telegram4kvas-release.zip
         exit 1
     fi
 
-    echo "Распаковка архива..."
+    echo "Распаковка Release..."
 
-    unzip -q /opt/tmp/main.zip -d /opt/tmp
+    mkdir -p /opt/tmp/telegram4kvas-release
+
+    unzip -q \
+        /opt/tmp/telegram4kvas-release.zip \
+        -d /opt/tmp/telegram4kvas-release
 
     if [ $? -ne 0 ]; then
-        echo "Ошибка распаковки архива."
-        rm -f /opt/tmp/main.zip
+        echo "Ошибка распаковки Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
         exit 1
     fi
 
-    if [ ! -f /opt/tmp/telegram4kvas-main/telegram_bot.py ]; then
-        echo "Ошибка: telegram_bot.py не найден в архиве."
-        rm -rf /opt/tmp/telegram4kvas-main
-        rm -f /opt/tmp/main.zip
+    release_root=$(find /opt/tmp/telegram4kvas-release \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d |
+        head -n 1)
+
+    if [ -z "$release_root" ]; then
+        echo "Ошибка: не удалось определить каталог Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
+        exit 1
+    fi
+
+    if [ ! -f "${release_root}/telegram_bot.py" ]; then
+        echo "Ошибка: telegram_bot.py не найден в Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
+        exit 1
+    fi
+
+    if [ ! -f "${release_root}/upgrade.sh" ]; then
+        echo "Ошибка: upgrade.sh не найден в Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
+        exit 1
+    fi
+
+    if [ ! -f "${release_root}/telegram_bot_config.py" ]; then
+        echo "Ошибка: telegram_bot_config.py не найден в Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
+        exit 1
+    fi
+
+    if [ ! -d "${release_root}/telebot" ]; then
+        echo "Ошибка: каталог telebot не найден в Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
+        exit 1
+    fi
+
+    if [ ! -f "${release_root}/S98telegram4kvas" ]; then
+        echo "Ошибка: S98telegram4kvas не найден в Release."
+        rm -rf /opt/tmp/telegram4kvas-release
+        rm -f /opt/tmp/telegram4kvas-release.zip
         exit 1
     fi
 
     echo "Копирование файлов..."
 
-    cp /opt/tmp/telegram4kvas-main/telegram_bot_config.py "${bot_path}"
-    cp /opt/tmp/telegram4kvas-main/telegram_bot.py "${bot_path}"
+    cp "${release_root}/telegram_bot_config.py" \
+        "$bot_path/telegram_bot_config.py"
 
-    rm -rf "${bot_path}/telebot"
-    cp -r /opt/tmp/telegram4kvas-main/telebot "${bot_path}"
+    cp "${release_root}/telegram_bot.py" \
+        "$bot_path/telegram_bot.py"
 
-    cp /opt/tmp/telegram4kvas-main/S98telegram4kvas \
+    rm -rf "$bot_path/telebot"
+
+    cp -r "${release_root}/telebot" \
+        "$bot_path/telebot"
+
+    cp "${release_root}/S98telegram4kvas" \
         /opt/etc/init.d/S98telegram4kvas
 
     chmod +x /opt/etc/init.d/S98telegram4kvas
+
+    cp "${release_root}/upgrade.sh" \
+        /opt/upgrade.sh
+
+    chmod +x /opt/upgrade.sh
+
+    echo "Updater установлен: /opt/upgrade.sh"
 
     echo ""
     echo "Введите API ключ, полученный от BotFather:"
@@ -258,7 +358,8 @@ if [ "$1" = "-install" ]; then
         exit 1
     fi
 
-    sed -i "s|^token = .*|token = '${api}'|" "${config_path}"
+    sed -i "s|^token = .*|token = '${api}'|" \
+        "$config_path"
 
     echo ""
     echo "Введите Telegram User ID администратора:"
@@ -271,13 +372,15 @@ if [ "$1" = "-install" ]; then
             ;;
     esac
 
-    sed -i "s|^userid = .*|userid = [${userid}]|" "${config_path}"
+    sed -i "s|^userid = .*|userid = [${userid}]|" \
+        "$config_path"
 
     echo ""
     echo "Telegram User ID сохранён: ${userid}"
 
-    sed -i '/^version = /d' "${config_path}"
-    echo "version = '${latest_version}'" >> "${config_path}"
+    sed -i '/^version = /d' "$config_path"
+
+    echo "version = '${latest_version}'" >> "$config_path"
 
     select_awg_interface
 
@@ -303,8 +406,8 @@ if [ "$1" = "-install" ]; then
     echo ""
     echo "Очистка временных файлов..."
 
-    rm -rf /opt/tmp/main.zip
-    rm -rf /opt/tmp/telegram4kvas-main
+    rm -rf /opt/tmp/telegram4kvas-release
+    rm -f /opt/tmp/telegram4kvas-release.zip
 
     echo ""
     echo "========================================"
@@ -320,6 +423,9 @@ if [ "$1" = "-install" ]; then
     echo ""
     echo "Смена AWG интерфейса:"
     echo "/opt/etc/init.d/S98telegram4kvas interface"
+    echo ""
+    echo "Проверка обновлений:"
+    echo "/opt/upgrade.sh"
     echo ""
 
     exit 0
