@@ -19,10 +19,15 @@ curl -OLf https://raw.githubusercontent.com/piponomarev/telegram4kvas/main/scrip
 ```
 /opt/etc/init.d/S98telegram4kvas start
 ```
+# Изменить интерфейс
+Для выбора другого AmneziaWG-интерфейса выполните:
+```
+/opt/etc/init.d/S98telegram4kvas interface
+```
 # Удаление
 Для удаления бота выполните команду
 ```
-curl -OLf https://raw.githubusercontent.com/dnstkrv/telegram4kvas/main/script/install.sh && sh install.sh -remove
+curl -OLf https://raw.githubusercontent.com/piponomarev/telegram4kvas/main/script/install.sh && sh install.sh -remove
 ```
 # На чай автору бота
 
