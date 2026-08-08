@@ -1,62 +1,181 @@
 #!/bin/sh
 
-script_status ()
-{
-		ret=$(ps | grep 'python3 /opt/etc/telegram4kvas/telegram_bot.py' | wc -l)
-		if [ "$ret" -eq 1 ]
-		then
-		return 1
-		else 
-		return 0
-		fi;
+CONFIG_FILE="/opt/etc/telegram4kvas/telegram4kvas.conf"
+TELEGRAM_ROUTES="149.154.160.0/20 91.108.0.0/16"
+BOT_COMMAND="python3 /opt/etc/telegram4kvas/telegram_bot.py"
+
+script_status() {
+    pgrep -f "$BOT_COMMAND" >/dev/null 2>&1
 }
 
-start()
-{
-        python3 /opt/etc/telegram4kvas/telegram_bot.py & 
-		echo Bot start
+find_awg_interfaces() {
+    ip -o link show 2>/dev/null |
+        awk -F': ' '{print $2}' |
+        cut -d'@' -f1 |
+        while read -r iface; do
+            case "$iface" in
+                nwg*)
+                    echo "$iface"
+                    ;;
+            esac
+        done
 }
 
-stop()
-{
-        pid_to_kill=$(ps -w | grep 'python3 /opt/etc/telegram4kvas/telegram_bot.py' | grep -v 'grep' | cut -d' ' -f1)
-			[ -n "${pid_to_kill}" ] && kill -9 "${pid_to_kill}" &> /dev/null
-        pid_to_kill=$(ps -w | grep 'python3 /opt/etc/telegram4kvas/telegram_bot.py' | grep -v 'grep' | cut -d' ' -f2)
-			[ -n "${pid_to_kill}" ] && kill -9 "${pid_to_kill}" &> /dev/null
+get_awg_interface() {
+    if [ -f "$CONFIG_FILE" ]; then
+        . "$CONFIG_FILE"
+    fi
+
+    echo "$TELEGRAM_AWG_INTERFACE"
 }
+
+configure_routes() {
+    AWG_INTERFACE=$(get_awg_interface)
+
+    if [ -z "$AWG_INTERFACE" ]; then
+        echo "Telegram AWG interface is not configured."
+        echo "Run: $0 interface"
+        return 1
+    fi
+
+    if ! ip link show "$AWG_INTERFACE" >/dev/null 2>&1; then
+        echo "Configured AWG interface not found: $AWG_INTERFACE"
+        echo "Run: $0 interface"
+        return 1
+    fi
+
+    echo "Using AWG interface: $AWG_INTERFACE"
+
+    for route in $TELEGRAM_ROUTES; do
+        if ip route replace "$route" dev "$AWG_INTERFACE" 2>/dev/null; then
+            echo "Telegram route configured: $route via $AWG_INTERFACE"
+        else
+            echo "Failed to configure Telegram route: $route"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+select_interface() {
+    INTERFACES=$(find_awg_interfaces)
+
+    if [ -z "$INTERFACES" ]; then
+        echo "No AWG interfaces (nwg*) found."
+        return 1
+    fi
+
+    echo "Available AWG interfaces:"
+    echo
+
+    count=0
+
+    for iface in $INTERFACES; do
+        count=$((count + 1))
+        echo "$count) $iface"
+    done
+
+    CURRENT_INTERFACE=$(get_awg_interface)
+
+    if [ -n "$CURRENT_INTERFACE" ]; then
+        echo
+        echo "Current interface: $CURRENT_INTERFACE"
+    fi
+
+    echo
+    printf "Select interface [1-%s]: " "$count"
+    read -r selection
+
+    case "$selection" in
+        ''|*[!0-9]*)
+            echo "Invalid selection."
+            return 1
+            ;;
+    esac
+
+    if [ "$selection" -lt 1 ] || [ "$selection" -gt "$count" ]; then
+        echo "Invalid selection."
+        return 1
+    fi
+
+    selected_interface=$(echo "$INTERFACES" | sed -n "${selection}p")
+
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+
+    printf 'TELEGRAM_AWG_INTERFACE="%s"\n' "$selected_interface" > "$CONFIG_FILE"
+
+    chmod 600 "$CONFIG_FILE"
+
+    echo
+    echo "Selected AWG interface: $selected_interface"
+    echo "Configuration saved to: $CONFIG_FILE"
+
+    configure_routes
+}
+
+start() {
+    if ! configure_routes; then
+        echo "Bot start aborted: Telegram routes are not configured."
+        return 1
+    fi
+
+    sleep 3
+
+    $BOT_COMMAND &
+
+    echo "Bot start"
+}
+
+stop() {
+    pid=$(pgrep -f "$BOT_COMMAND")
+
+    if [ -n "$pid" ]; then
+        kill $pid 2>/dev/null
+    fi
+
+    echo "Bot stopped"
+}
+
 case "$1" in
-        start)
-                if script_status
-                then
-                        echo Bot already running
-                else
-                        start
-                fi
-                ;;
-        stop)
-                if script_status
-                then
-                        stop
-						echo Bot stop
-                else
-                        echo Bot is not running
-                fi
-                ;;
-        status)
-                if script_status
-                then
-                        echo Bot already running
-                else
-                        echo Bot is not running
-                fi
-                ;;
+    start)
+        if script_status; then
+            echo "Bot already running"
+        else
+            start
+        fi
+        ;;
 
-        restart)
-                stop
-                sleep 3
-                start
-                ;;
-        *)
-                echo "Usage: $0 {start|stop|restart|status}"
-                ;;
+    stop)
+        if script_status; then
+            stop
+        else
+            echo "Bot is not running"
+        fi
+        ;;
+
+    restart)
+        if script_status; then
+            stop
+            sleep 3
+        fi
+
+        start
+        ;;
+
+    status)
+        if script_status; then
+            echo "Bot is running"
+        else
+            echo "Bot is not running"
+        fi
+        ;;
+
+    interface)
+        select_interface
+        ;;
+
+    *)
+        echo "Usage: $0 {start|stop|restart|status|interface}"
+        ;;
 esac
