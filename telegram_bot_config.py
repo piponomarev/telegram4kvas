@@ -2,4 +2,4 @@ token = 'insert:API'  # API ключ бота, полученный от @BotFat
 userid = []
 reconnection_timeout = 60 # Таймаут переподключения
 reconnection_attempts = 5 # Количество попыток переподключения
-version = ''
+version = 'v1.3'
