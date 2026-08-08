@@ -82,7 +82,7 @@ class Middleware(BaseMiddleware):
             for id in admins:
                 bot.send_message(
                     id,
-                    f"Попытка неавторизованного доступа:\n{user_link}\({username}\), UserID: {message.from_user.id}",
+                    f"Попытка неавторизованного доступа:\n{user_link}\\({username}\\), UserID: {message.from_user.id}",
                     parse_mode="MarkdownV2",
                 )
             return CancelUpdate()
@@ -733,7 +733,7 @@ def run_test(message: types.Message):
             [
                 "sed",
                 "-i",
-                "/\tipset_site_visit_check/s/^/#\ /",
+                "/\tipset_site_visit_check/s/^/#\\ /",
                 "/opt/apps/kvas/bin/libs/check",
             ]
         ).wait()
@@ -799,7 +799,7 @@ def update_bot(message: types.Message):
         )
 
         response = requests.get(
-            "https://api.github.com/repos/dnstkrv/telegram4kvas/releases/latest"
+            "https://api.github.com/repos/piponomarev/telegram4kvas/releases/latest"
         )
         if response.status_code != 200:
             raise Exception(f"Failed to retrieve latest version: {response.text}")
@@ -815,7 +815,7 @@ def update_bot(message: types.Message):
             if changelog:
                 send_long_message(changelog, message)
             os.system(
-                "curl -o /opt/upgrade.sh https://raw.githubusercontent.com/dnstkrv/telegram4kvas/main/upgrade.sh && sh /opt/upgrade.sh && rm /opt/upgrade.sh"
+                "curl -o /opt/upgrade.sh https://raw.githubusercontent.com/piponomarev/telegram4kvas/main/upgrade.sh && sh /opt/upgrade.sh && rm /opt/upgrade.sh"
             )
             bot.send_message(message.chat.id, "Запущено обновление бота")
         else:
