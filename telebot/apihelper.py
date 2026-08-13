@@ -11,6 +11,7 @@ except ImportError:
 import requests
 from requests.exceptions import HTTPError, ConnectionError, Timeout
 from requests.adapters import HTTPAdapter
+import socket
 
 try:
     # noinspection PyUnresolvedReferences
@@ -26,6 +27,64 @@ logger = telebot.logger
 
 proxy = None
 session = None
+
+
+def _get_awg_interface():
+    config_path = "/opt/etc/telegram4kvas/telegram4kvas.conf"
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            for line in config_file:
+                line = line.strip()
+                if line.startswith("TELEGRAM_AWG_INTERFACE="):
+                    interface = line.split("=", 1)[1].strip()
+                    return interface.strip('"').strip("'")
+    except Exception:
+        return None
+
+    return None
+
+
+def _create_req_session():
+    req_session = requests.sessions.Session()
+
+    interface = _get_awg_interface()
+
+    if interface:
+        try:
+            socket_options = [
+                (
+                    socket.SOL_SOCKET,
+                    socket.SO_BINDTODEVICE,
+                    interface.encode() + b"\0",
+                )
+            ]
+
+            adapter = HTTPAdapter()
+
+            adapter.init_poolmanager(
+                adapter._pool_connections,
+                adapter._pool_maxsize,
+                block=adapter._pool_block,
+                socket_options=socket_options,
+            )
+
+            req_session.mount("http://", adapter)
+            req_session.mount("https://", adapter)
+
+            logger.debug(
+                "Telegram HTTP session bound to AWG interface: %s",
+                interface,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Unable to bind Telegram HTTP session to interface %s: %s",
+                interface,
+                exc,
+            )
+
+    return req_session
+
 
 API_URL = None
 FILE_URL = None
@@ -61,10 +120,10 @@ def _get_req_session(reset=False):
 
     if SESSION_TIME_TO_LIVE == 0:
         # Session is one-time use
-        return requests.sessions.Session()
+        return _create_req_session()
     else:
         # Session lives some time or forever once created. Default
-        return util.per_thread('req_session', lambda: session if session else requests.sessions.Session(), reset)
+        return util.per_thread('req_session', lambda: session if session else _create_req_session(), reset)
 
 
 def _make_request(token, method_name, method='get', params=None, files=None):
